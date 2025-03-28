@@ -7,34 +7,82 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const multer = require("multer");
 const fs = require("fs");
 const { google } = require("googleapis");
-const axios = require("axios"); // Added missing axios import
+const axios = require("axios"); 
 require("dotenv").config();
+const mongoose = require("mongoose");
 
 const app = express();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Validate essential API key
+// essential API key
 if (!process.env.GEMINI_API_KEY) {
   console.error("GEMINI_API_KEY is not defined in .env file");
   process.exit(1);
 }
 
-// Set up EJS
+//for storing data
+
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+const userSchema = new mongoose.Schema({
+  googleId: String,
+  name: String,
+  email: String,
+  profilePic: String,
+  loginTime: { type: Date, default: Date.now },
+});
+
+const User = mongoose.model("User", userSchema);
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: process.env.GOOGLE_CALLBACK_URL,
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        let user = await User.findOne({ googleId: profile.id });
+
+        if (!user) {
+          user = new User({
+            googleId: profile.id,
+            name: profile.displayName,
+            email: profile.emails[0].value,
+            profilePic: profile.photos[0].value,
+          });
+          await user.save();
+        }
+
+        return done(null, user);
+      } catch (err) {
+        return done(err, null);
+      }
+    }
+  )
+);
+
+
+
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 
 // Middleware
-app.use(express.json()); // Added to parse JSON body
-app.use(express.urlencoded({ extended: true })); // Added to parse URL-encoded body
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true })); 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "fallback-secret-key", // Added fallback
+    secret: process.env.SESSION_SECRET || "fallback-secret-key", 
     resave: false,
     saveUninitialized: true,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // Use secure cookies in production
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      secure: process.env.NODE_ENV === "production", 
+      maxAge: 24 * 60 * 60 * 1000, 
     },
   })
 );
@@ -48,13 +96,13 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CALLBACK_URL
 );
 
-// Initialize Drive API client
+
 const drive = google.drive({ version: "v3", auth: oauth2Client });
 
 // File upload configuration
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    // Create upload directory if it doesn't exist
+   
     if (!fs.existsSync("upload/")) {
       fs.mkdirSync("upload/");
     }
@@ -77,7 +125,7 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: process.env.GOOGLE_CALLBACK_URL,
-      scope: ["profile", "email", "https://www.googleapis.com/auth/drive.file"], // Drive scope
+      scope: ["profile", "email", "https://www.googleapis.com/auth/drive.file"],
     },
     (accessToken, refreshToken, profile, done) => {
       // Store tokens with the profile
@@ -102,7 +150,7 @@ const ensureAuthenticated = (req, res, next) => {
   res.redirect("/");
 };
 
-// Function to get a Drive client for the authenticated user
+
 function getUserDriveClient(req) {
   if (!req.user || !req.user.accessToken) {
     throw new Error("User not authenticated or missing access token");
@@ -122,7 +170,7 @@ function getUserDriveClient(req) {
   return google.drive({ version: "v3", auth: userOauth2Client });
 }
 
-// Convert file to generative part
+
 function fileToGenerativePart(path, mimeType) {
   return {
     inlineData: {
@@ -132,7 +180,7 @@ function fileToGenerativePart(path, mimeType) {
   };
 }
 
-// Function to create "PAI Chatbot" folder in Google Drive if it doesn't exist
+
 async function getOrCreatePaiChatbotFolder(driveClient) {
   try {
     const response = await driveClient.files.list({
@@ -159,7 +207,7 @@ async function getOrCreatePaiChatbotFolder(driveClient) {
     return folder.data.id;
   } catch (error) {
     console.error("Error creating/retrieving PAI Chatbot folder:", error);
-    throw error; // Propagate the error to handle it at the route level
+    throw error;
   }
 }
 
@@ -203,7 +251,7 @@ app.post("/chat", async (req, res) => {
       return res.status(400).json({ error: "Invalid message format" });
     }
 
-    // Using the GoogleGenerativeAI library instead of direct API calls
+   
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
       const result = await model.generateContent(userMessage);
@@ -214,7 +262,7 @@ app.post("/chat", async (req, res) => {
     } catch (genAiError) {
       console.error("GoogleGenerativeAI library error:", genAiError);
 
-      // Fallback to direct API call if library fails
+   
       const response = await axios.post(
         `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
@@ -237,7 +285,7 @@ app.post("/chat", async (req, res) => {
         }
       );
 
-      // Extract text from response
+    
       let replyText = "No response generated";
       if (
         response.data &&
@@ -308,10 +356,10 @@ app.post("/upload", ensureAuthenticated, upload.any(), async (req, res) => {
         .json({ success: false, message: "No files uploaded." });
     }
 
-    // Get the drive client for this user
+    
     const userDrive = getUserDriveClient(req);
 
-    // Get or create the folder using the user's drive client
+
     const folderId = await getOrCreatePaiChatbotFolder(userDrive);
     if (!folderId) {
       return res.status(500).json({
@@ -365,7 +413,6 @@ app.post("/upload", ensureAuthenticated, upload.any(), async (req, res) => {
           driveLink: driveResponse.data.webViewLink,
         });
 
-        // Remove file from local storage after upload
         fs.unlinkSync(file.path);
       } catch (fileError) {
         console.error(`Error processing file ${file.originalname}:`, fileError);
